@@ -4,11 +4,11 @@ import random
 import asyncio
 import time
 
-#---------------------------------Game Settings--------------------------------------#
-TIMEOUT_DURATION = 2*60                                                              #
-CHECK_FREQUENCY = 10                                                                 #
-HIGHLIGHT_TIME = 0.5                                                                 #
-#------------------------------------------------------------------------------------#
+#---------------------------------Game Settings-----------------------------------------
+TIMEOUT_DURATION = 2*60
+CHECK_FREQUENCY = 10
+HIGHLIGHT_TIME = 0.5
+#---------------------------------------------------------------------------------------
 
 class SequenceMemoryGame(commands.Cog):
     def __init__(self, bot):
@@ -85,7 +85,7 @@ class SequenceMemoryGame(commands.Cog):
         self.games[ctx.channel.id] = game_state
 
     async def show_sequence(self, game):
-        #Show the sequence to the player
+        """Show the sequence to the player."""
         game["showing_sequence"] = True
         await game["message"].edit(view=self.create_game_view(game)[0])
 
@@ -129,7 +129,21 @@ class SequenceMemoryGame(commands.Cog):
     async def handle_game_end(self, game, interaction, reason, color=discord.Color.red()):
         """Helper method to handle game ending scenarios."""
         embed = self.create_embed("Game Over", reason, color)
-        await interaction.response.edit_message(embed=embed, view=None)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(embed=embed, view=None)
+            else:
+                await interaction.message.edit(embed=embed, view=None)
+        except discord.errors.InteractionResponded:
+            await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            print(f"Error handling game end: {e}")
+            # Attempt one final time to edit the message directly
+            try:
+                await game["message"].edit(embed=embed, view=None)
+            except:
+                pass
+        
         del self.games[interaction.channel.id]
 
     @commands.Cog.listener()
@@ -173,14 +187,16 @@ class SequenceMemoryGame(commands.Cog):
             await interaction.response.send_message("Please wait...", ephemeral=True)
             return
 
-        await interaction.response.defer()
-
         game["player_sequence"].append(button_index)
         current_index = len(game["player_sequence"]) - 1
 
+        # Check sequence before deferring
         if game["player_sequence"][current_index] != game["current_sequence"][current_index]:
             await self.handle_game_end(game, interaction, f"Wrong sequence! You reached Round {game['round']}")
             return
+
+        # Only defer if the sequence is correct
+        await interaction.response.defer()
 
         if len(game["player_sequence"]) == len(game["current_sequence"]):
             game["round"] += 1
