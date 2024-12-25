@@ -123,3 +123,25 @@ The bot supports:
 - Custom bot presence
 - Slash command synchronization
 - Error handling with interactive command listing
+
+### Admin Commands
+
+#### Prefix Commands
+- `{prefix}load <cog>` - Load a specific cog module (owner only)
+  - Example: `!load tictactoe`
+  - Automatically syncs slash commands after loading
+- `{prefix}unload <cog>` - Unload a specific cog module (owner only)
+  - Example: `!unload wordle`
+  - Automatically syncs slash commands after unloading
+- `{prefix}reload <cog>` - Reload a specific cog module (owner only)
+  - Example: `!reload memory`
+  - Automatically syncs slash commands after reloading
+- `{prefix}switch <cog_to_unload> <cog_to_load>` - Switch between cogs by unloading one and loading another (owner only)
+  - Example: `!switch tictactoe wordle`
+  - Automatically syncs slash commands after switching
+
+Note: Replace `{prefix}` with your configured bot prefix. All these commands:
+- Are restricted to the bot owner only
+- Automatically sync slash commands after execution
+- Provide feedback on success or failure
+- Handle errors gracefully with informative messages
