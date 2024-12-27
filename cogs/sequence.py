@@ -5,9 +5,10 @@ import asyncio
 import time
 
 #---------------------------------Game Settings-----------------------------------------
-TIMEOUT_DURATION = 2*60
-CHECK_FREQUENCY = 10
-HIGHLIGHT_TIME = 0.5
+TIMEOUT_DURATION = 2*60                                                                #
+CHECK_FREQUENCY = 10                                                                   #
+HIGHLIGHT_TIME = 0.5                                                                   #
+ERROR_HIGHLIGHT_TIME = 1.0  # Time to show red button before game over                 #
 #---------------------------------------------------------------------------------------
 
 class SequenceMemoryGame(commands.Cog):
@@ -182,15 +183,9 @@ class SequenceMemoryGame(commands.Cog):
         """Helper method to handle game ending scenarios."""
         embed = self.create_embed("Game Over", reason, color)
         try:
-            if not interaction.response.is_done():
-                await interaction.response.edit_message(embed=embed, view=None)
-            else:
-                await interaction.message.edit(embed=embed, view=None)
-        except discord.errors.InteractionResponded:
             await interaction.message.edit(embed=embed, view=None)
         except Exception as e:
             print(f"Error handling game end: {e}")
-            # Attempt one final time to edit the message directly
             try:
                 await game["message"].edit(embed=embed, view=None)
             except:
@@ -242,14 +237,15 @@ class SequenceMemoryGame(commands.Cog):
         game["player_sequence"].append(button_index)
         current_index = len(game["player_sequence"]) - 1
 
-        # Check sequence before deferring
+        # Check if the button press was correct
         if game["player_sequence"][current_index] != game["current_sequence"][current_index]:
             await interaction.response.defer()
             await self.show_error_and_end(game, interaction, button_index)
             return
 
-        # Only defer if the sequence is correct
+        # Update the view to show the correct button press
         await interaction.response.defer()
+        await interaction.message.edit(view=self.create_game_view(game))
 
         if len(game["player_sequence"]) == len(game["current_sequence"]):
             game["round"] += 1
