@@ -13,5 +13,5 @@ if BOT_TOKEN is None:
 
 
 """
-BOT_TOKEN = 'your token' #replace lines 10 to 11 with this if you don't want to set environment variables.
+BOT_TOKEN = 'your token' #replace lines 10 to 12 with this if you don't want to set environment variables.
 """
