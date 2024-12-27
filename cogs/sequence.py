@@ -4,23 +4,48 @@ import random
 import asyncio
 import time
 
-#---------------------------------Game Settings--------------------------------------#
-TIMEOUT_DURATION = 2*60                                                              #
-CHECK_FREQUENCY = 10                                                                 #
-HIGHLIGHT_TIME = 0.5                                                                 #
-#------------------------------------------------------------------------------------#
+#---------------------------------Game Settings-----------------------------------------
+TIMEOUT_DURATION = 2*60                                                                #
+CHECK_FREQUENCY = 10                                                                   #
+HIGHLIGHT_TIME = 0.5                                                                   #
+ERROR_HIGHLIGHT_TIME = 1.0  # Time to show red button before game over                 #
+#---------------------------------------------------------------------------------------
 
 class SequenceMemoryGame(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.games = {}
         self.game_timeout = TIMEOUT_DURATION
+
+    @tasks.loop(seconds=CHECK_FREQUENCY)
+    async def check_game_timeouts(self):
+        current_time = time.time()
+        for channel_id, game in list(self.games.items()):
+            if current_time - game["last_interaction_time"] > self.game_timeout:
+                try:
+                    await game["message"].edit(
+                        embed=self.create_embed(
+                            "Game Timed Out",
+                            "The game has been inactive for too long and has timed out.",
+                            discord.Color.red()
+                        ),
+                        view=None
+                    )
+                except:
+                    pass
+                del self.games[channel_id]
+
+    @check_game_timeouts.before_loop
+    async def before_check_game_timeouts(self):
+        await self.bot.wait_until_ready()
+
+    async def cog_load(self):
         self.check_game_timeouts.start()
 
     def cog_unload(self):
         self.check_game_timeouts.cancel()
 
-    def create_button(self, index, game_state, highlight=False):
+    def create_button(self, index, game_state, highlight=False, is_correct=False, is_error=False):
         """Helper method to create a button with consistent styling."""
         if index == 24:  # Start/Quit button
             return discord.ui.Button(
@@ -29,9 +54,18 @@ class SequenceMemoryGame(commands.Cog):
                 custom_id=f"button_{index}"
             )
         
+        # Determine button style based on state
+        style = discord.ButtonStyle.secondary  # Default gray
+        if highlight:
+            style = discord.ButtonStyle.success  # Green for sequence display
+        elif is_error:
+            style = discord.ButtonStyle.danger   # Red for wrong button
+        elif is_correct:
+            style = discord.ButtonStyle.success  # Green for correct press
+        
         return discord.ui.Button(
             label="\u200b",
-            style=discord.ButtonStyle.success if highlight else discord.ButtonStyle.secondary,
+            style=style,
             custom_id=f"button_{index}",
             disabled=not game_state["game_started"] or game_state["showing_sequence"] or highlight
         )
@@ -39,18 +73,40 @@ class SequenceMemoryGame(commands.Cog):
     def create_game_view(self, game_state, highlight_index=None):
         """Create a new view with buttons based on the current game state."""
         view = discord.ui.View()
-        buttons = []
 
         for i in range(25):
-            button = self.create_button(i, game_state, highlight_index == i)
-            buttons.append(button)
+            # Check if button was correctly pressed in current round
+            is_correct = (i in game_state["player_sequence"] and 
+                         game_state["player_sequence"].index(i) < len(game_state["current_sequence"]) and
+                         i == game_state["current_sequence"][game_state["player_sequence"].index(i)])
+            
+            # Check if this is the error button
+            is_error = game_state.get("error_button") == i
+            
+            button = self.create_button(i, game_state, 
+                                      highlight_index == i,
+                                      is_correct=is_correct,
+                                      is_error=is_error)
             view.add_item(button)
 
-        return view, buttons
+        return view
 
     def create_embed(self, title, description, color=discord.Color.blue()):
         """Helper method to create consistently styled embeds."""
         return discord.Embed(title=title, description=description, color=color)
+
+    async def show_error_and_end(self, game, interaction, button_index):
+        """Show red button briefly before ending the game."""
+        game["error_button"] = button_index
+        view = self.create_game_view(game)
+        
+        try:
+            await interaction.message.edit(view=view)
+            await asyncio.sleep(ERROR_HIGHLIGHT_TIME)
+        except:
+            pass
+        
+        await self.handle_game_end(game, interaction, f"Wrong sequence! You reached Round {game['round']}")
 
     @commands.hybrid_command(name="sequence", with_app_command=True)
     async def start_game(self, ctx):
@@ -71,10 +127,7 @@ class SequenceMemoryGame(commands.Cog):
             "is_quitting": False
         }
 
-        view, buttons = self.create_game_view(game_state)
-        game_state["view"] = view
-        game_state["buttons"] = buttons
-
+        view = self.create_game_view(game_state)
         embed = self.create_embed(
             "Sequence Memory Game",
             "Watch the sequence of buttons that light up and repeat it!\nPress Start Game to begin."
@@ -85,9 +138,9 @@ class SequenceMemoryGame(commands.Cog):
         self.games[ctx.channel.id] = game_state
 
     async def show_sequence(self, game):
-        #Show the sequence to the player
+        """Show the sequence to the player."""
         game["showing_sequence"] = True
-        await game["message"].edit(view=self.create_game_view(game)[0])
+        await game["message"].edit(view=self.create_game_view(game))
 
         last_highlighted = None  # Track the last highlighted button
 
@@ -102,14 +155,14 @@ class SequenceMemoryGame(commands.Cog):
             if button_index == last_highlighted:
                 continue
 
-            view, _ = self.create_game_view(game, highlight_index=button_index)
+            view = self.create_game_view(game, highlight_index=button_index)
             await game["message"].edit(view=view)
             last_highlighted = button_index  # Update last highlighted button
             await asyncio.sleep(HIGHLIGHT_TIME)
 
         if not game["is_quitting"]:
             game["showing_sequence"] = False
-            await game["message"].edit(view=self.create_game_view(game)[0])
+            await game["message"].edit(view=self.create_game_view(game))
 
     async def start_new_round(self, game):
         """Start a new round by adding to the sequence."""
@@ -129,7 +182,15 @@ class SequenceMemoryGame(commands.Cog):
     async def handle_game_end(self, game, interaction, reason, color=discord.Color.red()):
         """Helper method to handle game ending scenarios."""
         embed = self.create_embed("Game Over", reason, color)
-        await interaction.response.edit_message(embed=embed, view=None)
+        try:
+            await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            print(f"Error handling game end: {e}")
+            try:
+                await game["message"].edit(embed=embed, view=None)
+            except:
+                pass
+        
         del self.games[interaction.channel.id]
 
     @commands.Cog.listener()
@@ -173,41 +234,23 @@ class SequenceMemoryGame(commands.Cog):
             await interaction.response.send_message("Please wait...", ephemeral=True)
             return
 
-        await interaction.response.defer()
-
         game["player_sequence"].append(button_index)
         current_index = len(game["player_sequence"]) - 1
 
+        # Check if the button press was correct
         if game["player_sequence"][current_index] != game["current_sequence"][current_index]:
-            await self.handle_game_end(game, interaction, f"Wrong sequence! You reached Round {game['round']}")
+            await interaction.response.defer()
+            await self.show_error_and_end(game, interaction, button_index)
             return
+
+        # Update the view to show the correct button press
+        await interaction.response.defer()
+        await interaction.message.edit(view=self.create_game_view(game))
 
         if len(game["player_sequence"]) == len(game["current_sequence"]):
             game["round"] += 1
             await asyncio.sleep(0.5)
             await self.start_new_round(game)
-
-    @tasks.loop(seconds=CHECK_FREQUENCY)
-    async def check_game_timeouts(self):
-        current_time = time.time()
-        for channel_id, game in list(self.games.items()):
-            if current_time - game["last_interaction_time"] > self.game_timeout:
-                try:
-                    await game["message"].edit(
-                        embed=self.create_embed(
-                            "Game Timed Out",
-                            "The game has been inactive for too long and has timed out.",
-                            discord.Color.red()
-                        ),
-                        view=None
-                    )
-                except:
-                    pass
-                del self.games[channel_id]
-
-    @check_game_timeouts.before_loop
-    async def before_check_game_timeouts(self):
-        await self.bot.wait_until_ready()
 
 async def setup(bot):
     await bot.add_cog(SequenceMemoryGame(bot))
