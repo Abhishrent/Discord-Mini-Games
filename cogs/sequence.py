@@ -8,7 +8,8 @@ import time
 TIMEOUT_DURATION = 2*60                                                                #
 CHECK_FREQUENCY = 10                                                                   #
 HIGHLIGHT_TIME = 0.5                                                                   #
-ERROR_HIGHLIGHT_TIME = 1.0  # Time to show red button before game over                 #
+ERROR_HIGHLIGHT_TIME = 1.0  # Time to show red button before showing correct           #
+CORRECT_HIGHLIGHT_TIME = 1.0  # Time to show correct button after error                #
 #---------------------------------------------------------------------------------------
 
 class SequenceMemoryGame(commands.Cog):
@@ -45,7 +46,7 @@ class SequenceMemoryGame(commands.Cog):
     def cog_unload(self):
         self.check_game_timeouts.cancel()
 
-    def create_button(self, index, game_state, highlight=False, is_correct=False, is_error=False):
+    def create_button(self, index, game_state, highlight=False, is_correct=False, is_error=False, show_correct=False):
         """Helper method to create a button with consistent styling."""
         if index == 24:  # Start/Quit button
             return discord.ui.Button(
@@ -56,7 +57,9 @@ class SequenceMemoryGame(commands.Cog):
         
         # Determine button style based on state
         style = discord.ButtonStyle.secondary  # Default gray
-        if highlight:
+        if show_correct and index == game_state.get("correct_button"):
+            style = discord.ButtonStyle.primary  # Blue for showing correct button
+        elif highlight:
             style = discord.ButtonStyle.success  # Green for sequence display
         elif is_error:
             style = discord.ButtonStyle.danger   # Red for wrong button
@@ -83,10 +86,14 @@ class SequenceMemoryGame(commands.Cog):
             # Check if this is the error button
             is_error = game_state.get("error_button") == i
             
-            button = self.create_button(i, game_state, 
-                                      highlight_index == i,
-                                      is_correct=is_correct,
-                                      is_error=is_error)
+            button = self.create_button(
+                i, 
+                game_state, 
+                highlight_index == i,
+                is_correct=is_correct,
+                is_error=is_error,
+                show_correct=game_state.get("showing_correct", False)
+            )
             view.add_item(button)
 
         return view
@@ -96,16 +103,25 @@ class SequenceMemoryGame(commands.Cog):
         return discord.Embed(title=title, description=description, color=color)
 
     async def show_error_and_end(self, game, interaction, button_index):
-        """Show red button briefly before ending the game."""
+        """Show red button briefly, then show correct button, before ending the game."""
+        current_index = len(game["player_sequence"]) - 1
+        correct_button = game["current_sequence"][current_index]
+        
+        # Show wrong button in red
         game["error_button"] = button_index
         view = self.create_game_view(game)
+        await interaction.message.edit(view=view)
+        await asyncio.sleep(ERROR_HIGHLIGHT_TIME)
         
-        try:
-            await interaction.message.edit(view=view)
-            await asyncio.sleep(ERROR_HIGHLIGHT_TIME)
-        except:
-            pass
+        # Show correct button in blue
+        game["showing_correct"] = True
+        game["correct_button"] = correct_button
+        game["error_button"] = None  # Clear the error button
+        view = self.create_game_view(game)
+        await interaction.message.edit(view=view)
+        await asyncio.sleep(CORRECT_HIGHLIGHT_TIME)
         
+        # End the game
         await self.handle_game_end(game, interaction, f"Wrong sequence! You reached Round {game['round']}")
 
     @commands.hybrid_command(name="sequence", with_app_command=True)
@@ -124,7 +140,10 @@ class SequenceMemoryGame(commands.Cog):
             "showing_sequence": False,
             "last_interaction_time": time.time(),
             "message": None,
-            "is_quitting": False
+            "is_quitting": False,
+            "error_button": None,
+            "correct_button": None,
+            "showing_correct": False
         }
 
         view = self.create_game_view(game_state)
